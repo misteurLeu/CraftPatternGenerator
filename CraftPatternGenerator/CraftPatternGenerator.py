@@ -2,6 +2,7 @@ import colorsys
 import math
 import pandas as pd
 
+from collections import defaultdict
 from functools import lru_cache
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance
@@ -167,10 +168,11 @@ class CraftPatternGenerator:
         resume_font = ImageFont.truetype("C:/Windows/Fonts/Arial.ttf", font_resume_size)
         image_out = Image.new(
             'RGB',
-            (w * squares_sizes + font_resume_size * 8, h * squares_sizes),
+            (w * squares_sizes + font_resume_size * 10, h * squares_sizes),
             (240, 240, 240, 0)
         )
         draw = ImageDraw.Draw(image_out)
+        colors_count = defaultdict(lambda: 0)
         for i in range(w):
             for j in range(h):
                 curent_color = image_to_out.getpixel((i, j))
@@ -185,6 +187,7 @@ class CraftPatternGenerator:
                     width=1
                 )
                 index = self.get_color_index(colors, curent_color)
+                colors_count[index] += 1
                 draw.text(
                     (i * squares_sizes + 3, j * squares_sizes),
                     f"{COLORS_CODES[index]}",
@@ -214,6 +217,13 @@ class CraftPatternGenerator:
             draw.text(
                 (w * squares_sizes + 2 * font_resume_size, index * font_resume_size),
                 f" - {self.chart.iloc[color_index]['ref']}",
+                (15, 15, 15),
+                font=resume_font
+            )
+            draw.text(
+                (w * squares_sizes + (2 + len(self.chart.iloc[color_index]['ref'])) * font_resume_size,
+                 index * font_resume_size),
+                f" - x{colors_count[index]}",
                 (15, 15, 15),
                 font=resume_font
             )
