@@ -105,16 +105,25 @@ class CraftPatternGenerator:
                  saturation: Optional[float] = None):
         """Initialize the CraftPatternGenerator class."""
         self.chart = self.download_chart(chart_type)
+        self.saturation = saturation
         self.image_in = self.load_image(image_path)
         self.image_in = self.auto_crop(self.image_in, crop, crop_tolerance or 0) if crop is not None else self.image_in
-        self.saturation = saturation
+        self.image_in = self.image_in
+        # merge the near colors
         if target_size != -1:
             target_size = self.get_new_size_value(target_size)
-            self.image_in = self.image_in.resize(target_size, Image.NEAREST)
-        if self.saturation is not None:
-            self.saturate()
+            self.image_in.palette = None
+            self.image_in = self.image_in.resize(target_size, Image.BICUBIC)
         self.image_path = image_path
-
+        
+    def get_color_from_index(self, index: int) -> tuple[int, int, int, int]:
+        return (
+            self.chart.iloc[index]['r'],
+            self.chart.iloc[index]['g'],
+            self.chart.iloc[index]['b'],
+            255
+        )
+        
     def get_new_size_value(self, target_size: Union[tuple[int, int], int]) -> tuple[int, int]:
         """Calculate the new size for the image to process."""
         if isinstance(target_size, tuple):
@@ -124,15 +133,10 @@ class CraftPatternGenerator:
             return target_size, int(y * target_size / x)
         return int(x * target_size / y), target_size
 
-    def saturate(self):
-        """Increase the image color's saturation."""
-        enhancer = ImageEnhance.Color(self.image_in)
-        self.image_in = enhancer.enhance(self.saturation)
-
-    def replace_color(self, image: Image.Image) -> tuple[Image.Image, set]:
+    def replace_color(self, image: Image.Image) -> tuple[Image.Image, dict]:
         """Replace the color from image with the nearest in the chart."""
         w, h = image.size
-        colors_index = set()
+        colors_counted = defaultdict(lambda: 0)
         for i in range(w):
             print(f"processing column {i} on {w}")
             for j in range(h):
@@ -140,20 +144,71 @@ class CraftPatternGenerator:
                 if curent_color[3] == 0:
                     continue
                 neerest_color = self.get_neerest_color(curent_color)
-                colors_index.add(neerest_color)
-                color = (
-                    self.chart.iloc[neerest_color]['r'],
-                    self.chart.iloc[neerest_color]['g'],
-                    self.chart.iloc[neerest_color]['b'],
-                    255
-                )
+                colors_counted[neerest_color] += 1
+                color = self.get_color_from_index(neerest_color)
                 image.putpixel((i, j), color)
+
+        return image, colors_counted
+    
+    def replace_color_a_to_b(self, image: Image.Image, color_a: tuple, color_b: tuple) -> tuple[Image.Image, dict]:
+        """Replace the color from image with the nearest in the chart."""
+        w, h = image.size
+        colors_counted = defaultdict(lambda: 0)
+        for i in range(w):
+            for j in range(h):
+                curent_color = image.getpixel((i, j))
+                if curent_color[3] == 0:
+                    continue
+                if curent_color == color_a:
+                    image.putpixel((i, j), color_b)
+                    curent_color = color_b
+                neerest_color = self.get_neerest_color(curent_color)
+                colors_counted[neerest_color] += 1
+        return image, colors_counted
+
+    def reduce_color(self, image: Image.Image, color_limit: int, colors_index: dict) -> tuple[Image.Image, dict]:
+        """Reduce the color numbers in the image by merging the nearest colors."""
+        if color_limit < 2:
+            return image, colors_index
+
+        while any(val < color_limit for val in colors_index.values()):
+            colors_matching = {}
+            for color_key1 in colors_index.keys():
+                color1 = self.get_color_from_index(color_key1)
+                colors_matching[color_key1] = {
+                    "color": color1,
+                    "neerest_color": color1,
+                    "neerest_color_key": color_key1,
+                    "distance": math.inf
+                }
+                for color_key2 in colors_index.keys():
+                    if color_key1 == color_key2:
+                        continue
+                    color2 = self.get_color_from_index(color_key2)
+                    distance = self.get_color_distance(color1, color2)
+                    if distance < colors_matching[color_key1]["distance"]:
+                        colors_matching[color_key1]["neerest_color"] = color2
+                        colors_matching[color_key1]["distance"] = distance
+                        colors_matching[color_key1]["neerest_color_key"] = color_key2
+            color_keys = colors_matching.keys()
+            color_keys = sorted(color_keys, key=lambda x: colors_index[x])
+            print(f"color_keys: {color_keys}")
+            color_key = color_keys.pop(0)
+            color1 = colors_matching[color_key]["color"]
+            color2 = colors_matching[color_key]["neerest_color"]
+            color1_count = colors_index[color_key]
+            color2_count = colors_index[colors_matching[color_key]["neerest_color_key"]]
+            color_a, color_b = (color1, color2) if color1_count < color2_count else (color2, color1)
+            print(f"merge {color_key} ({color1_count} counted) with {colors_matching[color_key]['neerest_color_key']} ({color2_count} counted)")
+            image, colors_index = self.replace_color_a_to_b(image, color_a, color_b)
+
         return image, colors_index
 
     def run(self):
         """Launch the image processing"""
         image_colored, colors_avaible = self.replace_color(self.image_in)
-        self.output_image(image_colored, f'{self.image_path.parent}/{self.image_path.stem}-out.jpg', list(colors_avaible))
+        image_colored, colors_avaible = self.reduce_color(image_colored, 30, colors_avaible)
+        self.output_image(image_colored, f'{self.image_path.parent}/{self.image_path.stem}', list(colors_avaible.keys()))
 
     def output_image(self, image_to_out: Image.Image, output_path: str, colors: list):
         """Export the final image as a usable pattern for crafting activities."""
@@ -169,8 +224,17 @@ class CraftPatternGenerator:
         image_out = Image.new(
             'RGB',
             (w * squares_sizes + font_resume_size * 10, h * squares_sizes),
-            (240, 240, 240, 0)
+            preset_colors["white"]
         )
+        preview_size = max(w, h)
+        preview_displacement_h = 0 if w <= h else (w - h) // 2
+        preview_displacement_w = 0 if h <= w else (h - w) // 2
+        image_preview = Image.new(
+            'RGBA',
+            (preview_size, preview_size),
+            preset_colors["transparent"]
+        )
+
         draw = ImageDraw.Draw(image_out)
         colors_count = defaultdict(lambda: 0)
         for i in range(w):
@@ -179,6 +243,7 @@ class CraftPatternGenerator:
                 font_color = self.get_contrasted_color(curent_color)
                 if curent_color[3] == 0:
                     continue
+                image_preview.putpixel((i + preview_displacement_w, j + preview_displacement_h), curent_color)
                 draw.rectangle(
                     (i * squares_sizes, j * squares_sizes,
                      (i + 1) * squares_sizes, (j + 1) * squares_sizes),
@@ -227,7 +292,8 @@ class CraftPatternGenerator:
                 (15, 15, 15),
                 font=resume_font
             )
-        image_out.save(output_path)
+        image_out.save(f'{output_path}-{preview_size}-out.png')
+        image_preview.save(f'{output_path}-{preview_size}-preview.png')
 
     def get_color_index(self, colors: list, color: tuple[int, int, int]) -> int:
         """Given a color, find his index inside the selected chart."""
@@ -247,7 +313,7 @@ class CraftPatternGenerator:
         # left
         for i in range(width):
             if not all([
-                self.euclidian_color_distance(to_crop.getpixel((i, j)), color) <= tolerance
+                self.get_color_distance(to_crop.getpixel((i, j)), color) <= tolerance
                 for j in range(height)
             ]):
                 crop_box[0] = i
@@ -255,7 +321,7 @@ class CraftPatternGenerator:
         # top
         for j in range(height):
             if not all([
-                self.euclidian_color_distance(to_crop.getpixel((i, j)), color) <= tolerance
+                self.get_color_distance(to_crop.getpixel((i, j)), color) <= tolerance
                 for i in range(width)
             ]):
                 crop_box[1] = j
@@ -263,7 +329,7 @@ class CraftPatternGenerator:
         # right
         for i in range(width - 1, -1, -1):
             if not all([
-                self.euclidian_color_distance(to_crop.getpixel((i, j)), color) <= tolerance
+                self.get_color_distance(to_crop.getpixel((i, j)), color) <= tolerance
                 for j in range(height)
             ]):
                 crop_box[2] = i
@@ -271,7 +337,7 @@ class CraftPatternGenerator:
         # bottom
         for j in range(height - 1, -1, -1):
             if not all([
-                self.euclidian_color_distance(to_crop.getpixel((i, j)), color) <= tolerance
+                self.get_color_distance(to_crop.getpixel((i, j)), color) <= tolerance
                 for i in range(width)
             ]):
                 crop_box[3] = j
@@ -303,34 +369,21 @@ class CraftPatternGenerator:
         return chart
 
     @lru_cache
-    def euclidian_color_distance(self, color1: tuple, color2: tuple, convert_space='') -> float():
+    def get_color_distance(self, color1: tuple, color2: tuple) -> float:
         """Process the color chart in the color space give in parameter."""
-        if convert_space == 'cmyk':
-            color1 = rgb_to_cmyk(color1)
-            color2 = rgb_to_cmyk(color2)
-        elif convert_space == 'lab':
-            color1 = rgb2lab(color1)
-            color2 = rgb2lab(color2)
-        elif convert_space == 'hsv':
-            color1 = colorsys.rgb_to_hsv(color1[0] / 255, color1[1] / 255, color1[2] / 255)
-            color2 = colorsys.rgb_to_hsv(color2[0] / 255, color2[1] / 255, color2[2] / 255)
-        elif convert_space == 'hls':
-            color1 = colorsys.rgb_to_hls(color1[0] / 255, color1[1] / 255, color1[2] / 255)
-            color2 = colorsys.rgb_to_hls(color2[0] / 255, color2[1] / 255, color2[2] / 255)
-        elif convert_space == 'yiq':
-            color1 = colorsys.rgb_to_yiq(color1[0] / 255, color1[1] / 255, color1[2] / 255)
-            color2 = colorsys.rgb_to_yiq(color2[0] / 255, color2[1] / 255, color2[2] / 255)
-        distance = sum([(elem2 - elem1)**2 for elem1, elem2 in zip(color1, color2) if elem2 is not None])
-        distance = math.sqrt(distance)
-        return distance
+        r = (color1[0] + color2[0]) / 2
+        delta_R = (color1[0] - color2[0]) ** 2
+        delta_G = (color1[1] - color2[1]) ** 2
+        delta_B = (color1[2] - color2[2]) ** 2
+        distance = (2 + r / 256) * delta_R + 4 * delta_G + (2 + ((255 - r) / 256)) * delta_B
+        return math.sqrt(distance)
 
     @lru_cache
     def get_neerest_color(self, color: tuple):
         """Search for the nearest color in color chart."""
-        return self.chart.apply(lambda x: self.euclidian_color_distance(
+        return self.chart.apply(lambda x: self.get_color_distance(
             (x['r'], x['g'], x['b']),
-            color,
-            'lab'
+            color
         ), axis=1).idxmin()
 
     @lru_cache

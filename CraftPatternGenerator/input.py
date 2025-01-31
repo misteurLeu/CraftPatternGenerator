@@ -63,13 +63,16 @@ COLORS_CHARTS = dict(
     ),
 )
 COLORS_CHART_HEADER = ['ref', 'name', 'r', 'g', 'b', 'contributor']
-COLORS_CODES = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-                'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J',
-                'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T',
-                'U', 'V', 'W', 'X', 'Y', 'Z']
+COLORS_CODES = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J',
+                'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'a', 'b', 'c', 'd',
+                'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x',
+                'y', 'z']
 
 preset_colors = {
-    'transparent': (None, None, None, 0),
+    'transparent': (0, 0, 0, 0),
+    'true_white': (255, 255, 255),
+    'true_dark': (0, 0, 0),
     'white': (240, 240, 240),
     'black': (15, 15, 15),
+    'mole': (91, 91, 91),
 }
